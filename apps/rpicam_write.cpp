@@ -2,6 +2,7 @@
 
 #include "core/rpicam_app.hpp"
 #include "core/still_options.hpp"
+#include "post_processing_stages/object_detect.hpp"
 #include <fcntl.h>
 #include <semaphore.h>
 #include <sys/mman.h>
@@ -135,7 +136,7 @@ static bool change_memory_size(size_t size)
 }
 
 static void yuyv_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
-					   StillOptions const *options)
+					   StillOptions const *options, std::vector<Detection> const &detections)
 {
 	if (options->encoding == "yuv420")
 	{
@@ -143,7 +144,13 @@ static void yuyv_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamI
 		if ((w & 1) || (h & 1))
 			throw std::runtime_error("both width and height must be even");
 
-		size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size();
+		size_t detections_size = sizeof(int);
+		for (const auto &detection : detections)
+        {
+            detections_size += sizeof(int) + sizeof(float) + sizeof(int) * 4 + detection.name.size() + 1;
+        }
+
+		size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size() + detections_size;
 
 		if (init_shared_memory(shm_size) && change_memory_size(shm_size))
 		{
@@ -160,32 +167,59 @@ static void yuyv_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamI
 				char *shm_char_ptr = (char *)(shm_int_ptr + 2);
 				std::strcpy(shm_char_ptr, options->encoding.c_str());
 
-				uint8_t *shm_data_ptr = (uint8_t *)(shm_char_ptr + options->encoding.size() + 1);
+				uint8_t *shm_image_ptr = (uint8_t *)(shm_char_ptr + options->encoding.size() + 1);
 
 				std::vector<uint8_t> row(w);
 				for (unsigned int j = 0; j < h; j++, ptr += stride)
 				{
 					for (unsigned int i = 0; i < w; i++)
 						row[i] = ptr[i << 1];
-					std::memcpy(shm_data_ptr + j * w, &row[0], w);
+					std::memcpy(shm_image_ptr + j * w, &row[0], w);
 				}
 
 				ptr = (uint8_t *)mem[0].data();
-				shm_data_ptr += h * w;
+				shm_image_ptr += h * w;
 				for (unsigned int j = 0; j < h; j += 2, ptr += 2 * stride)
 				{
 					for (unsigned int i = 0; i < w / 2; i++)
 						row[i] = ptr[(i << 2) + 1];
-					std::memcpy(shm_data_ptr + (j / 2) * (w / 2), &row[0], w / 2);
+					std::memcpy(shm_image_ptr + (j / 2) * (w / 2), &row[0], w / 2);
 				}
 
 				ptr = (uint8_t *)mem[0].data();
-				shm_data_ptr += (h / 2) * (w / 2);
+				shm_image_ptr += (h / 2) * (w / 2);
 				for (unsigned int j = 0; j < h; j += 2, ptr += 2 * stride)
 				{
 					for (unsigned int i = 0; i < w / 2; i++)
 						row[i] = ptr[(i << 2) + 3];
-					std::memcpy(shm_data_ptr + (j / 2) * (w / 2), &row[0], w / 2);
+					std::memcpy(shm_image_ptr + (j / 2) * (w / 2), &row[0], w / 2);
+				}
+
+				uint8_t *shm_detections_ptr = shm_image_ptr + h * w;
+				int *detections_count_ptr = (int *)shm_detections_ptr;
+				*detections_count_ptr = detections.size();
+				shm_detections_ptr += sizeof(int);
+
+				for (const auto &detection : detections)
+				{
+					int *category_ptr = (int *)shm_detections_ptr;
+					*category_ptr = detection.category;
+					shm_detections_ptr += sizeof(int);
+
+					float *confidence_ptr = (float *)shm_detections_ptr;
+					*confidence_ptr = detection.confidence;
+					shm_detections_ptr += sizeof(float);
+
+					int *box_ptr = (int *)shm_detections_ptr;
+					box_ptr[0] = detection.box.x;
+					box_ptr[1] = detection.box.y;
+					box_ptr[2] = detection.box.width;
+					box_ptr[3] = detection.box.height;
+					shm_detections_ptr += sizeof(int) * 4;
+
+					char *name_ptr = (char *)shm_detections_ptr;
+					std::strcpy(name_ptr, detection.name.c_str());
+					shm_detections_ptr += detection.name.size() + 1;
 				}
 
 				sem_post(sem_read_);
@@ -198,7 +232,7 @@ static void yuyv_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamI
 }
 
 static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
-						 StillOptions const *options)
+						 StillOptions const *options, std::vector<Detection> const &detections)
 {
 	if (options->encoding == "yuv420")
 	{
@@ -208,7 +242,13 @@ static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, Strea
 		if (mem.size() != 1)
 			throw std::runtime_error("incorrect number of planes in YUV420 data");
 
-		size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size();
+		size_t detections_size = sizeof(int);
+		for (const auto &detection : detections)
+        {
+            detections_size += sizeof(int) + sizeof(float) + sizeof(int) * 4 + detection.name.size() + 1;
+        }
+
+		size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size() + detections_size;
 
 		if (init_shared_memory(shm_size) && change_memory_size(shm_size))
 		{
@@ -225,25 +265,52 @@ static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, Strea
 				char *shm_char_ptr = (char *)(shm_int_ptr + 2);
 				std::strcpy(shm_char_ptr, options->encoding.c_str());
 
-				uint8_t *shm_data_ptr = (uint8_t *)(shm_char_ptr + options->encoding.size() + 1);
+				uint8_t *shm_image_ptr = (uint8_t *)(shm_char_ptr + options->encoding.size() + 1);
 				for (unsigned int j = 0; j < h; j++)
 				{
-					std::memcpy(shm_data_ptr + j * w, Y + j * stride, w);
+					std::memcpy(shm_image_ptr + j * w, Y + j * stride, w);
 				}
 
 				uint8_t *U = Y + stride * h;
 				h /= 2, w /= 2, stride /= 2;
-				shm_data_ptr += h * w;
+				shm_image_ptr += h * w;
 				for (unsigned int j = 0; j < h; j++)
 				{
-					std::memcpy(shm_data_ptr + j * w, U + j * stride, w);
+					std::memcpy(shm_image_ptr + j * w, U + j * stride, w);
 				}
 
 				uint8_t *V = U + stride * h;
-				shm_data_ptr += h * w;
+				shm_image_ptr += h * w;
 				for (unsigned int j = 0; j < h; j++)
 				{
-					std::memcpy(shm_data_ptr + j * w, V + j * stride, w);
+					std::memcpy(shm_image_ptr + j * w, V + j * stride, w);
+				}
+
+				uint8_t *shm_detections_ptr = shm_image_ptr + h * w;
+				int *detections_count_ptr = (int *)shm_detections_ptr;
+				*detections_count_ptr = detections.size();
+				shm_detections_ptr += sizeof(int);
+
+				for (const auto &detection : detections)
+				{
+					int *category_ptr = (int *)shm_detections_ptr;
+					*category_ptr = detection.category;
+					shm_detections_ptr += sizeof(int);
+
+					float *confidence_ptr = (float *)shm_detections_ptr;
+					*confidence_ptr = detection.confidence;
+					shm_detections_ptr += sizeof(float);
+
+					int *box_ptr = (int *)shm_detections_ptr;
+					box_ptr[0] = detection.box.x;
+					box_ptr[1] = detection.box.y;
+					box_ptr[2] = detection.box.width;
+					box_ptr[3] = detection.box.height;
+					shm_detections_ptr += sizeof(int) * 4;
+
+					char *name_ptr = (char *)shm_detections_ptr;
+					std::strcpy(name_ptr, detection.name.c_str());
+					shm_detections_ptr += detection.name.size() + 1;
 				}
 
 				sem_post(sem_read_);
@@ -256,12 +323,18 @@ static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, Strea
 }
 
 static void rgb_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
-					  StillOptions const *options)
+					  StillOptions const *options, std::vector<Detection> const &detections)
 {
 	if (options->encoding != "rgb24" && options->encoding != "rgb48")
 		throw std::runtime_error("encoding should be set to rgb");
 
-	size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size();
+	size_t detections_size = sizeof(int);
+	for (const auto &detection : detections)
+	{
+		detections_size += sizeof(int) + sizeof(float) + sizeof(int) * 4 + detection.name.size() + 1;
+	}
+
+	size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size() + detections_size;
 
 	if (init_shared_memory(shm_size) && change_memory_size(shm_size))
 	{
@@ -282,10 +355,37 @@ static void rgb_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamIn
 			char *shm_char_ptr = (char *)(shm_int_ptr + 2);
 			std::strcpy(shm_char_ptr, options->encoding.c_str());
 
-			uint8_t *shm_data_ptr = (uint8_t *)(shm_char_ptr + options->encoding.size() + 1);
+			uint8_t *shm_image_ptr = (uint8_t *)(shm_char_ptr + options->encoding.size() + 1);
 			for (unsigned int j = 0; j < h; j++, ptr += stride)
 			{
-				std::memcpy(shm_data_ptr + j * wr_stride, ptr, wr_stride);
+				std::memcpy(shm_image_ptr + j * wr_stride, ptr, wr_stride);
+			}
+
+			uint8_t *shm_detections_ptr = shm_image_ptr + h * w;
+			int *detections_count_ptr = (int *)shm_detections_ptr;
+			*detections_count_ptr = detections.size();
+			shm_detections_ptr += sizeof(int);
+
+			for (const auto &detection : detections)
+			{
+				int *category_ptr = (int *)shm_detections_ptr;
+				*category_ptr = detection.category;
+				shm_detections_ptr += sizeof(int);
+
+				float *confidence_ptr = (float *)shm_detections_ptr;
+				*confidence_ptr = detection.confidence;
+				shm_detections_ptr += sizeof(float);
+
+				int *box_ptr = (int *)shm_detections_ptr;
+				box_ptr[0] = detection.box.x;
+				box_ptr[1] = detection.box.y;
+				box_ptr[2] = detection.box.width;
+				box_ptr[3] = detection.box.height;
+				shm_detections_ptr += sizeof(int) * 4;
+
+				char *name_ptr = (char *)shm_detections_ptr;
+				std::strcpy(name_ptr, detection.name.c_str());
+				shm_detections_ptr += detection.name.size() + 1;
 			}
 
 			sem_post(sem_read_);
@@ -300,13 +400,16 @@ static void write_images(RPiCamWriteApp &app, CompletedRequestPtr &payload, Stre
 	const std::vector<libcamera::Span<uint8_t>> mem = r.Get();
 	StreamInfo info = app.GetStreamInfo(stream);
 
+	std::vector<Detection> detections;
+	payload->post_process_metadata.Get("object_detect.results", detections);
+
 	if (info.pixel_format == libcamera::formats::YUYV)
-		yuyv_write(mem, info, options);
+		yuyv_write(mem, info, options, detections);
 	else if (info.pixel_format == libcamera::formats::YUV420)
-		yuv420_write(mem, info, options);
+		yuv420_write(mem, info, options, detections);
 	else if (info.pixel_format == libcamera::formats::BGR888 || info.pixel_format == libcamera::formats::RGB888 ||
 			 info.pixel_format == libcamera::formats::BGR161616 || info.pixel_format == libcamera::formats::RGB161616)
-		rgb_write(mem, info, options);
+		rgb_write(mem, info, options, detections);
 	else
 		throw std::runtime_error("unrecognised YUV/RGB save format");
 }
