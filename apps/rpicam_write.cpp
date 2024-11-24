@@ -146,9 +146,9 @@ static void yuyv_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamI
 
 		size_t detections_size = sizeof(int);
 		for (const auto &detection : detections)
-        {
-            detections_size += sizeof(int) + sizeof(float) + sizeof(int) * 4 + detection.name.size() + 1;
-        }
+		{
+			detections_size += sizeof(int) + sizeof(float) + sizeof(int) * 4 + detection.name.size() + 1;
+		}
 
 		size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size() + detections_size;
 
@@ -244,9 +244,9 @@ static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, Strea
 
 		size_t detections_size = sizeof(int);
 		for (const auto &detection : detections)
-        {
-            detections_size += sizeof(int) + sizeof(float) + sizeof(int) * 4 + detection.name.size() + 1;
-        }
+		{
+			detections_size += sizeof(int) + sizeof(float) + sizeof(int) * 4 + detection.name.size() + 1;
+		}
 
 		size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size() + detections_size;
 
