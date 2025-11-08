@@ -1,6 +1,6 @@
 project('rpicam-apps', 'c', 'cpp',
         meson_version : '>= 0.64.0',
-        version : '1.5.3',
+        version : '1.10.0',
         default_options : [
             'werror=true',
             'warning_level=3',
@@ -9,8 +9,6 @@ project('rpicam-apps', 'c', 'cpp',
             'buildtype=release',
         ],
         license : 'BSD-2-Clause')
-
-meson.add_dist_script('utils' / 'gen-dist.sh')
 
 fs = import('fs')
 
@@ -36,6 +34,12 @@ endif
 dl_dep = dependency('dl', required : true)
 libcamera_dep = dependency('libcamera', required : true)
 
+if get_option('disable_rpi_features') == true
+    cpp_arguments += '-DDISABLE_RPI_FEATURES'
+endif
+
+add_project_arguments(cpp_arguments, language : 'cpp')
+
 summary({
             'location' : libcamera_dep.get_variable('libdir'),
             'version' : libcamera_dep.version()
@@ -45,27 +49,20 @@ summary({
 rpicam_app_src = []
 rpicam_app_dep = [libcamera_dep, dl_dep]
 
+conf_data = configuration_data()
+
 subdir('core')
 subdir('encoder')
 subdir('image')
 subdir('output')
+subdir('post_processing_stages')
 subdir('preview')
 subdir('utils')
 
-add_project_arguments(cpp_arguments, language : 'cpp')
-
-# Must be put after add_project_arguments as it defines shared library targets.
-subdir('post_processing_stages')
+configure_file(output : 'config.h', configuration : conf_data)
 
 # Generate a version string.
 version_cmd = [meson.project_source_root() / 'utils' / 'version.py', meson.project_version()]
-
-# Check if a version.gen file is present.
-# This would have been generated from the meson dist command.
-dist_version_file = meson.project_source_root() / 'version.gen'
-if fs.is_file(dist_version_file)
-    version_cmd += fs.read(dist_version_file)
-endif
 
 version_cpp = vcs_tag(command : version_cmd,
                       replace_string: '@VER@',
@@ -78,17 +75,15 @@ rpicam_app_src += version_cpp
 rpicam_app = library(
     'rpicam_app',
     rpicam_app_src,
-    soversion : meson.project_version(),
+    version : meson.project_version(),
     include_directories : include_directories('.'),
     install : true,
-    name_prefix : '',
     dependencies : rpicam_app_dep,
 )
 
-# Install a symlink to the old library name for legacy purposes.
-install_symlink('libcamera_app.so',
-                install_dir: get_option('libdir'),
-                pointing_to: 'rpicam_app.so')
+pkg = import('pkgconfig')
+pkg.generate(rpicam_app,
+             version: meson.project_version())
 
 subdir('apps')
 

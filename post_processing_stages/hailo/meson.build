@@ -23,6 +23,7 @@ hailo_deps = [hailort_dep, hailo_tappas_dep, libcamera_dep, opencv_dep]
 # Hailo Tappas PP config files to be installed
 hailopp_config_files = files([
     assets_dir / 'yolov5_personface.json',
+    assets_dir / 'yolov5seg.json',
 ])
 
 hailo_postprocessing_src = files([
@@ -52,7 +53,7 @@ postproc_assets += files([
     assets_dir / 'hailo_pose_inf_fl.json',
 ])
 
-hailo_cpp_arguments = ['-Wno-ignored-qualifiers', '-Wno-unused-parameter', '-Wno-extra']
+hailo_cpp_arguments = ['-Wno-ignored-qualifiers', '-Wno-unused-parameter', '-Wno-extra', '-Wno-pessimizing-move']
 
 hailo_postprocessing_lib = shared_module('hailo-postproc', hailo_postprocessing_src,
                                          dependencies : hailo_deps,

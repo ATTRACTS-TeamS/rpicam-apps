@@ -65,8 +65,4 @@ if enable_tflite
                                dependencies: [libcamera_dep, boost_dep],
                                link_with : rpicam_app,
                                install : true)
-
-    install_symlink('libcamera-detect',
-                    install_dir: get_option('bindir'),
-                    pointing_to: 'rpicam-detect')
 endif
