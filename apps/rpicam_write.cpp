@@ -141,18 +141,18 @@ static bool change_memory_size(size_t size)
 // static void yuyv_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
 // 					   StillOptions const *options, std::vector<Detection> const &detections)
 // {
-// 	if (options->encoding == "yuv420")
+// 	if (options->Get().encoding == "yuv420")
 // 	{
 // 		%% TODO: implement this %%
 // 	}
 // 	else
-// 		throw std::runtime_error("output format " + options->encoding + " not supported");
+// 		throw std::runtime_error("output format " + options->Get().encoding + " not supported");
 // }
 
 static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
 						 StillOptions const *options, std::vector<Detection> const &detections)
 {
-	if (options->encoding == "yuv420")
+	if (options->Get().encoding == "yuv420")
 	{
 		unsigned w = info.width, h = info.height, stride = info.stride;
 		if ((w & 1) || (h & 1))
@@ -166,7 +166,7 @@ static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, Strea
 			detections_size += sizeof(int) + sizeof(float) + sizeof(int) * 4 + MAX_NAME_SIZE + 1;
 		}
 
-		size_t shm_size = sizeof(int) * 2 + options->encoding.size() + 1 + mem[0].size() + detections_size;
+		size_t shm_size = sizeof(int) * 2 + options->Get().encoding.size() + 1 + mem[0].size() + detections_size;
 
 		if (init_shared_memory(shm_size) && change_memory_size(shm_size))
 		{
@@ -179,10 +179,10 @@ static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, Strea
 				shm_int_ptr[1] = h;
 
 				char *shm_char_ptr = (char *)(shm_int_ptr + 2);
-				std::strcpy(shm_char_ptr, options->encoding.c_str());
+				std::strcpy(shm_char_ptr, options->Get().encoding.c_str());
 
 				uint8_t *Y = (uint8_t *)mem[0].data();
-				uint8_t *shm_image_ptr = (uint8_t *)(shm_char_ptr + options->encoding.size() + 1);
+				uint8_t *shm_image_ptr = (uint8_t *)(shm_char_ptr + options->Get().encoding.size() + 1);
 				for (unsigned int j = 0; j < h; j++)
 				{
 					std::memcpy(shm_image_ptr + j * w, Y + j * stride, w);
@@ -236,18 +236,18 @@ static void yuv420_write(std::vector<libcamera::Span<uint8_t>> const &mem, Strea
 		}
 	}
 	else
-		throw std::runtime_error("output format " + options->encoding + " not supported");
+		throw std::runtime_error("output format " + options->Get().encoding + " not supported");
 }
 
 // static void rgb_write(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
 // 					  StillOptions const *options, std::vector<Detection> const &detections)
 // {
-// 	if (options->encoding == "rgb24" || options->encoding == "rgb48")
+// 	if (options->Get().encoding == "rgb24" || options->Get().encoding == "rgb48")
 // 	{
 // 		%% TODO: implement this %%
 // 	}
 // 	else
-// 		throw std::runtime_error("output format " + options->encoding + " not supported");
+// 		throw std::runtime_error("output format " + options->Get().encoding + " not supported");
 // }
 
 static void write_images(RPiCamWriteApp &app, CompletedRequestPtr &payload, Stream *stream, StillOptions const *options)
@@ -297,7 +297,7 @@ static void event_loop(RPiCamWriteApp &app)
 
 		LOG(2, "Still frame " << count);
 		auto now = std::chrono::high_resolution_clock::now();
-		if (options->timeout && (now - start_time) > options->timeout.value)
+		if (options->Get().timeout && (now - start_time) > options->Get().timeout.value)
 			return;
 
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
@@ -313,7 +313,7 @@ int main(int argc, char *argv[])
 		StillOptions *options = app.GetOptions();
 		if (options->Parse(argc, argv))
 		{
-			if (options->verbose >= 2)
+			if (options->Get().verbose >= 2)
 				options->Print();
 
 			event_loop(app);
